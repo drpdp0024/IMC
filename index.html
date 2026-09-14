@@ -354,6 +354,7 @@ function defaultConfig(){
     adminPassword: "admin123",
     visionText: VISION_TEXT,
     missionText: MISSION_TEXT,
+    officeOrder: null, // {fileName, mimeType, uploadedAt, chunkCount} — the PDF bytes live in separate officeOrderChunkN keys
   };
 }
 function defaultDepartments(){
@@ -378,6 +379,7 @@ async function loadAll(){
     data.members = [];
     data.offerings = [];
     data.submissions = [];
+    data.officeOrderDataUrl = null;
     await Promise.all([
       sheetSet('config', data.config),
       sheetSet('departments', data.departments),
@@ -391,8 +393,34 @@ async function loadAll(){
     data.members = parseCell(raw.members, 'members', []);
     data.offerings = parseCell(raw.offerings, 'offerings', []);
     data.submissions = parseCell(raw.submissions, 'submissions', []);
+    data.officeOrderDataUrl = reconstructOfficeOrder(raw, data.config.officeOrder);
   }
   migrateData();
+}
+
+/* The office order PDF is too big for one Google Sheets cell (50,000 char
+   limit), so it's uploaded in chunks under separate keys (officeOrderChunk0,
+   officeOrderChunk1, ...) and reassembled here into a data: URL. Only the
+   small metadata object (name, size, chunk count) lives in data.config. */
+const OFFICE_ORDER_CHUNK_SIZE = 40000;
+const OFFICE_ORDER_MAX_BYTES = 10 * 1024 * 1024; // 10MB raw file
+function reconstructOfficeOrder(raw, meta){
+  if(!meta || !meta.chunkCount) return null;
+  let combined = '';
+  for(let i=0;i<meta.chunkCount;i++){
+    const chunk = raw['officeOrderChunk'+i];
+    if(chunk===undefined) return null; // incomplete upload — treat as missing rather than show a corrupt file
+    combined += JSON.parse(chunk);
+  }
+  return `data:${meta.mimeType};base64,${combined}`;
+}
+function fileToBase64(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(new Error('Could not read the file.'));
+    reader.readAsDataURL(file);
+  });
 }
 
 /* Older versions of this app assigned a member to one whole department, and
@@ -560,7 +588,7 @@ function renderLogin(){
           <div class="field"><label>Password</label><input type="password" id="loginPass" placeholder="Password"></div>
           <button class="btn btn-primary btn-block" onclick="doMemberLogin()">Sign in as Committee Member</button>
         `}
-        
+        <div class="hint-box">First time here? The <b>Admin</b> tab uses a shared institute password (default <code>admin123</code>, changeable in Settings). Committee members are created by the admin under <b>Committee Members</b> and assigned to specific department + semester combinations. All data is stored in your connected Google Sheet.</div>
       </div>
     </div>
   </div>`;
@@ -600,6 +628,7 @@ function renderModal(){
    ========================================================================= */
 const ADMIN_NAV = [
   {id:'overview', label:'Overview'},
+  {id:'officeOrder', label:'Office Order'},
   {id:'departments', label:'Departments'},
   {id:'members', label:'Committee Members'},
   {id:'offerings', label:'Teachers & Subjects'},
@@ -629,12 +658,83 @@ function setAdminTab(t){ state.adminTab=t; render(); }
 function renderAdminTab(){
   switch(state.adminTab){
     case 'overview': return renderAdminOverview();
+    case 'officeOrder': return renderAdminOfficeOrder();
     case 'departments': return renderAdminDepartments();
     case 'members': return renderAdminMembers();
     case 'offerings': return renderAdminOfferings();
     case 'submissions': return renderAdminSubmissions();
     case 'settings': return renderAdminSettings();
   }
+}
+
+/* ---- Office Order ---- */
+function renderAdminOfficeOrder(){
+  const oo = data.config.officeOrder;
+  return `
+  <div class="card">
+    <div class="card-head"><div><h3>Office Order</h3><p>Upload the office order PDF. It appears in every committee member's sidebar, above "My assignments".</p></div></div>
+    ${oo ? `
+      <div style="display:flex;align-items:center;gap:12px;padding:14px;background:var(--paper-50);border:1px solid var(--paper-200);border-radius:8px;margin-bottom:16px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:180px;">
+          <div style="font-weight:600;">${escapeHtml(oo.fileName)}</div>
+          <div style="font-size:12px;color:var(--slate-600);">Uploaded ${escapeHtml(new Date(oo.uploadedAt).toLocaleString())}</div>
+        </div>
+        ${data.officeOrderDataUrl ? `<a class="btn btn-outline btn-sm" href="${data.officeOrderDataUrl}" download="${escapeHtml(oo.fileName)}">Download</a>` : ''}
+        <button class="btn btn-danger btn-sm" onclick="removeOfficeOrder()">Remove</button>
+      </div>
+      ${data.officeOrderDataUrl
+        ? `<embed src="${data.officeOrderDataUrl}" type="application/pdf" style="width:100%;height:520px;border:1px solid var(--paper-200);border-radius:8px;">`
+        : `<div class="hint-box">The file is recorded but its contents haven't loaded on this device yet — press <b>⟳ Sync</b> in the sidebar to pull it down.</div>`}
+    ` : `<div class="hint-box">No office order uploaded yet.</div>`}
+    <div class="field" style="margin-top:16px;">
+      <label>${oo ? 'Replace with a new PDF' : 'Upload a PDF'}</label>
+      <input type="file" id="officeOrderFile" accept="application/pdf,.pdf">
+    </div>
+    <div id="ooProgress" style="font-size:12.5px;color:var(--slate-600);margin-bottom:10px;"></div>
+    <button class="btn btn-primary btn-sm" id="ooUploadBtn" onclick="uploadOfficeOrder()">Upload</button>
+  </div>`;
+}
+async function uploadOfficeOrder(){
+  const input = document.getElementById('officeOrderFile');
+  const file = input.files && input.files[0];
+  if(!file){ showToast('Choose a PDF file first.'); return; }
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  if(!isPdf){ showToast('Please choose a PDF file.'); return; }
+  if(file.size > OFFICE_ORDER_MAX_BYTES){
+    showToast(`That file is too large (${(file.size/1024/1024).toFixed(1)}MB) — please keep office orders under ${OFFICE_ORDER_MAX_BYTES/1024/1024}MB.`);
+    return;
+  }
+  const btn = document.getElementById('ooUploadBtn');
+  const progressEl = document.getElementById('ooProgress');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  try{
+    const base64 = await fileToBase64(file);
+    const chunkCount = Math.ceil(base64.length / OFFICE_ORDER_CHUNK_SIZE) || 1;
+    for(let i=0;i<chunkCount;i++){
+      if(progressEl) progressEl.textContent = `Uploading part ${i+1} of ${chunkCount}…`;
+      const chunk = base64.slice(i*OFFICE_ORDER_CHUNK_SIZE, (i+1)*OFFICE_ORDER_CHUNK_SIZE);
+      await sheetSet('officeOrderChunk'+i, chunk);
+    }
+    data.config.officeOrder = { fileName: file.name, mimeType: file.type || 'application/pdf', uploadedAt: Date.now(), chunkCount };
+    data.officeOrderDataUrl = `data:${data.config.officeOrder.mimeType};base64,${base64}`;
+    if(progressEl) progressEl.textContent = '';
+    showToast('Office order uploaded.');
+    render();
+    persist('config');
+  }catch(e){
+    console.error(e);
+    showToast('Upload failed partway through — check your connection and try again.');
+    if(btn){ btn.disabled=false; btn.textContent='Upload'; }
+    if(progressEl) progressEl.textContent = '';
+  }
+}
+function removeOfficeOrder(){
+  if(!confirm('Remove the office order? Committee members will no longer see it. (This only unlinks it — the uploaded parts stay in your Google Sheet.)')) return;
+  data.config.officeOrder = null;
+  data.officeOrderDataUrl = null;
+  render();
+  showToast('Office order removed.');
+  persist('config');
 }
 
 function renderAdminOverview(){
@@ -981,7 +1081,7 @@ function renderMemberShell(){
   const assigns = memberAssignments(mem);
   // "fill" isn't a persistent nav tab — it's only reached via a "+ New report"
   // button next to a specific assignment, or by editing an existing report.
-  const NAV = [{id:'home',label:'My assignments'},{id:'submissions',label:'Past reports'}];
+  const NAV = [{id:'officeOrder',label:'Office Order'},{id:'home',label:'My assignments'},{id:'submissions',label:'Past reports'}];
   const titleMap = Object.fromEntries(NAV.map(n=>[n.id,n.label]));
   titleMap.fill = state.draft && state.draft.editingId ? 'Edit report' : 'New report';
   const activeView = state.memberView==='fill' ? null : state.memberView;
@@ -1007,7 +1107,23 @@ function setMemberView(v){ state.memberView=v; render(); }
 function renderMemberView(mem){
   if(state.memberView==='fill') return renderFillForm(mem);
   if(state.memberView==='submissions') return renderMemberSubmissions(mem);
+  if(state.memberView==='officeOrder') return renderMemberOfficeOrder();
   return renderMemberHome(mem);
+}
+
+function renderMemberOfficeOrder(){
+  const oo = data.config.officeOrder;
+  if(!oo) return emptyState('No office order yet', 'Your admin hasn\u2019t uploaded an office order.');
+  return `
+  <div class="card">
+    <div class="card-head">
+      <div><h3>${escapeHtml(oo.fileName)}</h3><p>Uploaded ${escapeHtml(new Date(oo.uploadedAt).toLocaleString())}</p></div>
+      ${data.officeOrderDataUrl ? `<a class="btn btn-outline btn-sm" href="${data.officeOrderDataUrl}" download="${escapeHtml(oo.fileName)}">Download</a>` : ''}
+    </div>
+    ${data.officeOrderDataUrl
+      ? `<embed src="${data.officeOrderDataUrl}" type="application/pdf" style="width:100%;height:72vh;border:1px solid var(--paper-200);border-radius:8px;">`
+      : `<div class="hint-box">The file hasn't loaded on this device yet — press <b>⟳ Sync</b> in the sidebar and reopen this tab.</div>`}
+  </div>`;
 }
 
 function existingSubmissionFor(departmentId, semester){
