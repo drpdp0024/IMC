@@ -439,6 +439,7 @@ async function persist(key){
 }
 
 async function syncNow(){
+  showToast('Syncing…');
   try{
     await loadAll();
     showToast('Data refreshed from Google Sheet.');
@@ -683,7 +684,7 @@ function openDeptModal(id){
   `};
   render();
 }
-async function saveDept(id){
+function saveDept(id){
   const name = document.getElementById('mDeptName').value.trim();
   const chairmanName = document.getElementById('mDeptChair').value.trim();
   if(!name){ showToast('Department name is required.'); return; }
@@ -692,14 +693,16 @@ async function saveDept(id){
   }else{
     data.departments.push({id:uid(), name, chairmanName});
   }
-  await persist('departments'); closeModal(); showToast('Department saved.');
+  closeModal(); showToast('Department saved.');
+  persist('departments');
 }
-async function deleteDept(id){
+function deleteDept(id){
   const inUse = data.members.some(m=>(m.assignments||[]).some(a=>a.departmentId===id)) || data.offerings.some(o=>o.departmentId===id) || data.submissions.some(s=>s.departmentId===id);
   if(inUse && !confirm('This department has members, subjects or submitted reports linked to it. Delete anyway? Linked records will keep the old department name but can no longer be edited via this department.')) return;
   if(!inUse && !confirm('Delete this department?')) return;
   data.departments = data.departments.filter(d=>d.id!==id);
-  await persist('departments'); render(); showToast('Department deleted.');
+  render(); showToast('Department deleted.');
+  persist('departments');
 }
 
 /* ---- Members ---- */
@@ -763,7 +766,7 @@ function toggleAssignCol(deptId, checked){
 function toggleAssignRow(sem, checked){
   document.querySelectorAll(`.assign-cell[data-sem="${sem}"]`).forEach(cb=> cb.checked = checked);
 }
-async function saveMember(id){
+function saveMember(id){
   const name = document.getElementById('mMemName').value.trim();
   const username = document.getElementById('mMemUser').value.trim();
   const password = document.getElementById('mMemPass').value;
@@ -780,12 +783,14 @@ async function saveMember(id){
   }else{
     data.members.push({id:uid(), name, username, password, assignments});
   }
-  await persist('members'); closeModal(); showToast('Committee member saved.');
+  closeModal(); showToast('Committee member saved.');
+  persist('members');
 }
-async function deleteMember(id){
+function deleteMember(id){
   if(!confirm('Remove this committee member? They will no longer be able to sign in.')) return;
   data.members = data.members.filter(m=>m.id!==id);
-  await persist('members'); render(); showToast('Member removed.');
+  render(); showToast('Member removed.');
+  persist('members');
 }
 
 /* ---- Offerings (Teachers & Subjects) ---- */
@@ -843,7 +848,7 @@ function openOfferingModal(id){
   `};
   render();
 }
-async function saveOffering(id){
+function saveOffering(id){
   const courseCode = document.getElementById('mOffCode').value.trim();
   const subjectName = document.getElementById('mOffSubj').value.trim();
   const teacherName = document.getElementById('mOffTeach').value.trim();
@@ -855,12 +860,14 @@ async function saveOffering(id){
   }else{
     data.offerings.push({id:uid(), courseCode, subjectName, teacherName, departmentId, semester});
   }
-  await persist('offerings'); closeModal(); showToast('Saved.');
+  closeModal(); showToast('Saved.');
+  persist('offerings');
 }
-async function deleteOffering(id){
+function deleteOffering(id){
   if(!confirm('Remove this teacher/subject entry?')) return;
   data.offerings = data.offerings.filter(o=>o.id!==id);
-  await persist('offerings'); render(); showToast('Removed.');
+  render(); showToast('Removed.');
+  persist('offerings');
 }
 
 /* ---- Submissions (admin) ---- */
@@ -901,10 +908,11 @@ function renderSubmissionTable(list, opts){
     </tr>`;
   }).join('')}</tbody></table>`;
 }
-async function deleteSubmission(id){
+function deleteSubmission(id){
   if(!confirm('Delete this submitted report? This cannot be undone.')) return;
   data.submissions = data.submissions.filter(s=>s.id!==id);
-  await persist('submissions'); render(); showToast('Report deleted.');
+  render(); showToast('Report deleted.');
+  persist('submissions');
 }
 
 /* ---- Settings ---- */
@@ -937,23 +945,26 @@ function renderAdminSettings(){
   <div class="hint-box">All data (departments, members, subjects and reports) lives in your connected Google Sheet. Anyone with the Apps Script Web App URL embedded in this file can read and write that sheet, so treat this file and the sheet like a shared office drawer — keep the file itself off public websites, and treat member passwords as shared-office credentials rather than high-security logins. Two people saving at the exact same moment can overwrite each other's change, so it's best for one person to edit a given report at a time.</div>
   `;
 }
-async function saveHeaderSettings(){
+function saveHeaderSettings(){
   data.config.instituteName = document.getElementById('sInst').value.trim() || INSTITUTE_NAME_DEFAULT;
   data.config.examTerm = document.getElementById('sTerm').value.trim();
   data.config.academicSession = document.getElementById('sSession').value.trim();
-  await persist('config'); showToast('Header settings saved.'); render();
+  showToast('Header settings saved.'); render();
+  persist('config');
 }
-async function saveVisionSettings(){
+function saveVisionSettings(){
   data.config.visionText = document.getElementById('sVision').value.trim();
   data.config.missionText = document.getElementById('sMission').value.trim();
-  await persist('config'); showToast('Vision & mission saved.');
+  showToast('Vision & mission saved.');
+  persist('config');
 }
-async function saveAdminPassword(){
+function saveAdminPassword(){
   const p1 = document.getElementById('sPw1').value, p2 = document.getElementById('sPw2').value;
   if(!p1 || p1.length<4){ showToast('Password should be at least 4 characters.'); return; }
   if(p1!==p2){ showToast('Passwords do not match.'); return; }
   data.config.adminPassword = p1;
-  await persist('config'); showToast('Admin password updated.'); render();
+  showToast('Admin password updated.'); render();
+  persist('config');
 }
 
 function emptyState(big, small){
@@ -1072,6 +1083,7 @@ function blankRow(){
   return r;
 }
 async function startNewReport(departmentId, semester){
+  showToast('Loading latest assignment data…');
   try{ await loadAll(); }catch(e){ console.error(e); showToast('Could not refresh from the sheet — using last-loaded data.'); }
   const mem = currentMember();
   if(!mem){ showToast('Your session data is out of date — please log in again.'); render(); return; }
@@ -1295,7 +1307,7 @@ function computeRowMissingFields(row){
   if(!(row.remarks||'').trim()) missing.push('Remarks');
   return missing;
 }
-async function submitDraft(){
+function submitDraft(){
   const d = state.draft;
   const filledRows = d.rows.filter(r=>r.offeringId);
   if(filledRows.length===0){ showToast('Add at least one subject before saving.'); return; }
@@ -1333,10 +1345,10 @@ async function submitDraft(){
     Object.assign(existing, payload);
     existing.updatedAt = Date.now();
     existing.updatedByName = mem.name;
-    await persist('submissions');
     state.draft = null;
     openPreview(existing.id, 'member');
     showToast('Report updated.');
+    persist('submissions');
   }else{
     const submission = {
       id: uid(),
@@ -1346,10 +1358,10 @@ async function submitDraft(){
       submittedAt: Date.now(),
     };
     data.submissions.push(submission);
-    await persist('submissions');
     state.draft = null;
     openPreview(submission.id, 'member');
     showToast('Report saved.');
+    persist('submissions');
   }
 }
 function editSubmission(id){
