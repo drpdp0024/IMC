@@ -999,6 +999,12 @@ function renderMemberView(mem){
   return renderMemberHome(mem);
 }
 
+function existingSubmissionFor(departmentId, semester){
+  const matches = data.submissions.filter(s=>s.departmentId===departmentId && String(s.semester)===String(semester));
+  if(matches.length===0) return null;
+  return matches.slice().sort((a,b)=>(b.updatedAt||b.submittedAt)-(a.updatedAt||a.submittedAt))[0];
+}
+
 function renderMemberHome(mem){
   const assigns = memberAssignments(mem);
   if(assigns.length===0){
@@ -1011,15 +1017,27 @@ function renderMemberHome(mem){
     <div class="stat"><div class="num">${mySubs.length}</div><div class="lbl">Reports filed so far</div></div>
   </div>
   <div class="card">
-    <div class="card-head"><div><h3>Your assignments</h3><p>Start a new report for any of the department + semester combinations you're responsible for.</p></div></div>
-    <table class="data-table"><thead><tr><th>Department</th><th>Semester</th><th>Reports filed</th><th></th></tr></thead>
+    <div class="card-head"><div><h3>Your assignments</h3><p>Each department + semester combination can be reported on once. Once it's filed, use Edit from Past reports to make changes.</p></div></div>
+    <table class="data-table"><thead><tr><th>Department</th><th>Semester</th><th>Status</th><th></th></tr></thead>
     <tbody>${assigns.map(a=>{
-      const count = data.submissions.filter(s=>s.departmentId===a.departmentId && String(s.semester)===String(a.semester)).length;
+      const existing = existingSubmissionFor(a.departmentId, a.semester);
+      const status = existing
+        ? `<span class="badge" style="background:var(--green-ok-bg);color:var(--green-ok);">✓ Filed ${escapeHtml(existing.date)}</span>`
+        : `<span class="badge">Not filed yet</span>`;
+      let actions;
+      if(!existing){
+        actions = `<button class="btn btn-primary btn-sm" onclick="startNewReport('${a.departmentId}','${a.semester}')">+ New report</button>`;
+      }else{
+        actions = `<button class="btn btn-outline btn-sm" onclick="openPreview('${existing.id}','member')">View / Print</button>`;
+        if(existing.submittedByUsername===mem.username){
+          actions += `<button class="btn btn-outline btn-sm" onclick="editSubmission('${existing.id}')">Edit</button>`;
+        }
+      }
       return `<tr>
         <td>${escapeHtml(a.deptName)}</td>
         <td>Semester ${escapeHtml(a.semester)}</td>
-        <td><span class="badge">${count}</span></td>
-        <td class="row-actions"><button class="btn btn-primary btn-sm" onclick="startNewReport('${a.departmentId}','${a.semester}')">+ New report</button></td>
+        <td>${status}</td>
+        <td class="row-actions">${actions}</td>
       </tr>`;
     }).join('')}</tbody></table>
   </div>
@@ -1061,15 +1079,26 @@ async function startNewReport(departmentId, semester){
   if(assigns.length===0){ showToast('You have no department + semester assignments yet. Ask your admin to assign you one.'); render(); return; }
 
   if(departmentId===undefined || semester===undefined){
-    if(assigns.length===1){
-      departmentId = assigns[0].departmentId; semester = assigns[0].semester;
+    const open = assigns.filter(a=> !existingSubmissionFor(a.departmentId, a.semester));
+    if(open.length===0){ showToast('Every one of your assignments already has a report filed. Use Edit from Past reports to change one.'); render(); return; }
+    if(open.length===1){
+      departmentId = open[0].departmentId; semester = open[0].semester;
     }else{
-      openAssignmentPicker(assigns);
+      openAssignmentPicker(open);
       return;
     }
   }
   const dep = deptById(departmentId);
   if(!dep){ showToast('That department no longer exists.'); render(); return; }
+  // A department + semester can only be reported on once — if one already
+  // exists (e.g. filed by a teammate who shares this assignment, or this
+  // page was left open in another tab), open it instead of starting a new one.
+  const existing = existingSubmissionFor(departmentId, semester);
+  if(existing){
+    showToast(`A report for ${dep.name} · Semester ${semester} already exists — opening it.`);
+    openPreview(existing.id, 'member');
+    return;
+  }
   state.draft = {
     departmentId: dep.id,
     semester: String(semester),
