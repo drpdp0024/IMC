@@ -196,6 +196,9 @@ table.entry-table input.num-input{width:56px;font-size:12px;padding:5px 6px;bord
 .row-num{font-weight:700;color:var(--slate-600);}
 .remove-row-btn{background:none;border:none;color:var(--red-no);font-size:16px;line-height:1;padding:4px;}
 .form-actions{display:flex;justify-content:space-between;align-items:center;margin-top:18px;flex-wrap:wrap;gap:10px;}
+.hod-field-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 2px;border-bottom:1px solid var(--paper-100);}
+.hod-field-row:last-child{border-bottom:none;}
+.hod-field-row>span:first-child{font-size:13.5px;color:var(--ink-700);}
 
 /* ---------- PRINT SHEET ---------- */
 .sheet-outer-wrap{background:var(--paper-100);padding:34px 20px;}
@@ -277,7 +280,7 @@ const IMG_WATERMARK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAArwAAAK0CAY
    Google Sheet, paste the provided code, Deploy > New deployment > Web app,
    access "Anyone", then copy the URL it gives you into the line below).
    ========================================================================= */
-const SHEETS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbyrIdZk0RG1l752R6EBimLOi3_V9fG-sshuLEVnONTbVHS5i0FuzHrbT6bAu1pfIrto/exec"; // <-- PASTE YOUR APPS SCRIPT WEB APP URL HERE, BETWEEN THE QUOTES
+const SHEETS_WEBAPP_URL = ""; // <-- PASTE YOUR APPS SCRIPT WEB APP URL HERE, BETWEEN THE QUOTES
 
 const INSTITUTE_NAME_DEFAULT = "Dr.Panjabrao Deshmukh Polytechnic, Amravati";
 const VISION_TEXT = "To be a leader in imparting technical education to contribute as a valuable resource for industry and society.";
@@ -311,8 +314,31 @@ function nextToggleState(cur){
 }
 function toggleClass(v){ return v==='Y'?'y':v==='N'?'n':v==='NA'?'na':''; }
 
-let data = { config:null, departments:[], members:[], offerings:[], submissions:[] };
-let state = { session:null, view:'login', loginRole:'admin', loginError:'', adminTab:'overview', memberView:'home', draft:null, previewId:null, modal:null, toast:null };
+/* ---- "Academic Monitoring" (Internal Monitoring for HODs) — filled by the
+   Academic Coordinator, one row per department + semester. Matches the
+   uploaded IIMC_Format.docx exactly: Yes/No only (no NA) since that's what
+   the source form specifies. ---- */
+const HOD_TOGGLE_FIELDS = [
+  {key:'questionBank', label:'Preparation of question bank'},
+  {key:'paTestDisplay', label:'PA Test marks display'},
+  {key:'assignmentQuiz', label:'Assignment, Quiz, Surprise test conducted'},
+  {key:'remedialClasses', label:'Remedial classes conducted'},
+  {key:'proposedPlan', label:'Proposed plan prepared'},
+  {key:'otherActivities', label:'Other activities like Quiz, GD, Seminar or any other'},
+  {key:'contentBeyond', label:'Content beyond syllabus'},
+];
+const HOD_NUMBER_FIELDS = [
+  {key:'expertLectures', label:'No of expert Lectures conducted'},
+  {key:'visitsDone', label:'No of visits done'},
+];
+const HOD_TEXT_FIELDS = [
+  {key:'anyOtherInfo', label:'Any other information'},
+  {key:'remarks', label:'Remarks'},
+];
+function nextYN(cur){ return cur==='' ? 'Y' : cur==='Y' ? 'N' : ''; }
+
+let data = { config:null, departments:[], members:[], offerings:[], submissions:[], hodReports:[] };
+let state = { session:null, view:'login', loginRole:'admin', loginError:'', adminTab:'overview', memberView:'home', coordinatorView:'reports', draft:null, hodDraft:null, previewId:null, previewKind:'submission', modal:null, toast:null };
 
 function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4); }
 
@@ -352,6 +378,8 @@ function defaultConfig(){
     examTerm: "FIRST TERM",
     academicSession: "WINTER-2026",
     adminPassword: "admin123",
+    coordinatorPassword: "coord123",
+    coordinatorName: "",
     visionText: VISION_TEXT,
     missionText: MISSION_TEXT,
     officeOrder: null, // {fileName, mimeType, uploadedAt, chunkCount} — the PDF bytes live in separate officeOrderChunkN keys
@@ -379,6 +407,7 @@ async function loadAll(){
     data.members = [];
     data.offerings = [];
     data.submissions = [];
+    data.hodReports = [];
     data.officeOrderDataUrl = null;
     await Promise.all([
       sheetSet('config', data.config),
@@ -386,6 +415,7 @@ async function loadAll(){
       sheetSet('members', data.members),
       sheetSet('offerings', data.offerings),
       sheetSet('submissions', data.submissions),
+      sheetSet('hodReports', data.hodReports),
     ]);
   }else{
     data.config = parseCell(raw.config, 'config', defaultConfig());
@@ -393,6 +423,7 @@ async function loadAll(){
     data.members = parseCell(raw.members, 'members', []);
     data.offerings = parseCell(raw.offerings, 'offerings', []);
     data.submissions = parseCell(raw.submissions, 'submissions', []);
+    data.hodReports = parseCell(raw.hodReports, 'hodReports', []);
     data.officeOrderDataUrl = reconstructOfficeOrder(raw, data.config.officeOrder);
   }
   migrateData();
@@ -545,6 +576,8 @@ function render(){
     html = renderLogin();
   }else if(state.session.role==='admin'){
     html = renderAdminShell();
+  }else if(state.session.role==='coordinator'){
+    html = renderCoordinatorShell();
   }else{
     html = renderMemberShell();
   }
@@ -563,6 +596,7 @@ function escapeHtml(s){
    ========================================================================= */
 function renderLogin(){
   const role = state.loginRole;
+  const sortedMembers = data.members.slice().sort((a,b)=>a.name.localeCompare(b.name));
   return `
   <div class="login-wrap">
     <div class="login-side">
@@ -578,16 +612,27 @@ function renderLogin(){
         <div class="role-toggle">
           <button class="${role==='admin'?'active':''}" onclick="setLoginRole('admin')">Admin</button>
           <button class="${role==='member'?'active':''}" onclick="setLoginRole('member')">Committee Member</button>
+          <button class="${role==='coordinator'?'active':''}" onclick="setLoginRole('coordinator')">Academic Coordinator</button>
         </div>
         ${state.loginError ? `<div class="error-msg">${escapeHtml(state.loginError)}</div>` : ''}
         ${role==='admin' ? `
           <div class="field"><label>Admin password</label><input type="password" id="loginAdminPw" placeholder="Enter admin password"></div>
           <button class="btn btn-primary btn-block" onclick="doAdminLogin()">Sign in as Admin</button>
+        ` : role==='coordinator' ? `
+          <div class="field"><label>Academic Coordinator password</label><input type="password" id="loginCoordPass" placeholder="Enter coordinator password"></div>
+          <button class="btn btn-primary btn-block" onclick="doCoordinatorLogin()">Sign in as Academic Coordinator</button>
         ` : `
-          <div class="field"><label>Username</label><input type="text" id="loginUser" placeholder="e.g. amit.rao"></div>
+          <div class="field"><label>Your name</label>
+            <select id="loginUserSelect" ${sortedMembers.length===0?'disabled':''}>
+              ${sortedMembers.length===0
+                ? `<option value="">No committee members set up yet</option>`
+                : `<option value="">— Select your name —</option>` + sortedMembers.map(m=>`<option value="${escapeHtml(m.username)}">${escapeHtml(m.name)}</option>`).join('')}
+            </select>
+          </div>
           <div class="field"><label>Password</label><input type="password" id="loginPass" placeholder="Password"></div>
-          <button class="btn btn-primary btn-block" onclick="doMemberLogin()">Sign in as Committee Member</button>
+          <button class="btn btn-primary btn-block" onclick="doMemberLogin()" ${sortedMembers.length===0?'disabled':''}>Sign in as Committee Member</button>
         `}
+        <div class="hint-box">First time here? The <b>Admin</b> and <b>Academic Coordinator</b> tabs each use a shared password (defaults <code>admin123</code> and <code>coord123</code>, both changeable in Settings). Committee members are created by the admin and pick their own name above. All data is stored in your connected Google Sheet.</div>
       </div>
     </div>
   </div>`;
@@ -602,16 +647,25 @@ function doAdminLogin(){
   }
 }
 function doMemberLogin(){
-  const u = document.getElementById('loginUser').value.trim();
+  const u = document.getElementById('loginUserSelect').value;
   const p = document.getElementById('loginPass').value;
-  const m = data.members.find(x=>x.username.toLowerCase()===u.toLowerCase() && x.password===p);
+  if(!u){ state.loginError = 'Please select your name.'; render(); return; }
+  const m = data.members.find(x=>x.username===u && x.password===p);
   if(m){
     state.session = {role:'member', memberId:m.id}; state.loginError=''; state.memberView='home'; render();
   }else{
-    state.loginError = 'Username or password is incorrect.'; render();
+    state.loginError = 'Incorrect password for that name.'; render();
   }
 }
-function logout(){ state.session=null; state.loginError=''; state.draft=null; render(); }
+function doCoordinatorLogin(){
+  const p = document.getElementById('loginCoordPass').value;
+  if(p === data.config.coordinatorPassword){
+    state.session = {role:'coordinator'}; state.loginError=''; state.coordinatorView='reports'; render();
+  }else{
+    state.loginError = 'Incorrect Academic Coordinator password.'; render();
+  }
+}
+function logout(){ state.session=null; state.loginError=''; state.draft=null; state.hodDraft=null; render(); }
 
 /* =========================================================================
    MODAL HELPERS
@@ -632,6 +686,7 @@ const ADMIN_NAV = [
   {id:'members', label:'Committee Members'},
   {id:'offerings', label:'Teachers & Subjects'},
   {id:'submissions', label:'Submissions'},
+  {id:'hodReports', label:'HOD Reports'},
   {id:'settings', label:'Settings'},
 ];
 function renderAdminShell(){
@@ -662,6 +717,7 @@ function renderAdminTab(){
     case 'members': return renderAdminMembers();
     case 'offerings': return renderAdminOfferings();
     case 'submissions': return renderAdminSubmissions();
+    case 'hodReports': return renderAdminHodReports();
     case 'settings': return renderAdminSettings();
   }
 }
@@ -742,12 +798,18 @@ function renderAdminOverview(){
     <div class="stat"><div class="num">${data.departments.length}</div><div class="lbl">Departments</div></div>
     <div class="stat"><div class="num">${data.members.length}</div><div class="lbl">Committee members</div></div>
     <div class="stat"><div class="num">${data.offerings.length}</div><div class="lbl">Teacher–subject entries</div></div>
-    <div class="stat"><div class="num">${data.submissions.length}</div><div class="lbl">Reports submitted</div></div>
+    <div class="stat"><div class="num">${data.submissions.length}</div><div class="lbl">Course reports submitted</div></div>
+    <div class="stat"><div class="num">${data.hodReports.length}</div><div class="lbl">HOD reports submitted</div></div>
   </div>
   <div class="card">
     <div class="card-head"><div><h3>Recent submissions</h3><p>Latest internal monitoring reports across all departments</p></div>
     <button class="btn btn-outline btn-sm" onclick="setAdminTab('submissions')">View all</button></div>
     ${renderSubmissionTable(data.submissions.slice().sort((a,b)=>b.submittedAt-a.submittedAt).slice(0,5), {compact:true})}
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h3>Recent HOD reports</h3><p>Latest department-level reports from academic coordinators</p></div>
+    <button class="btn btn-outline btn-sm" onclick="setAdminTab('hodReports')">View all</button></div>
+    ${renderHodReportsTable(data.hodReports.slice().sort((a,b)=>b.submittedAt-a.submittedAt).slice(0,5), {compact:true})}
   </div>`;
 }
 
@@ -1014,6 +1076,50 @@ function deleteSubmission(id){
   persist('submissions');
 }
 
+/* ---- HOD Reports (admin view of the Academic Coordinator's "for HODs" reports) ---- */
+function renderAdminHodReports(){
+  const filterDept = state.hodFilter || 'all';
+  const list = data.hodReports.filter(r=> filterDept==='all' || r.departmentId===filterDept).slice().sort((a,b)=>b.submittedAt-a.submittedAt);
+  return `
+  <div class="card">
+    <div class="card-head"><div><h3>HOD Reports</h3><p>Department-level "Academic Monitoring" reports filed by Academic Coordinators.</p></div></div>
+    <div class="tabs">
+      <button class="${filterDept==='all'?'active':''}" onclick="setHodFilter('all')">All departments</button>
+      ${data.departments.map(d=>`<button class="${filterDept===d.id?'active':''}" onclick="setHodFilter('${d.id}')">${escapeHtml(d.name)}</button>`).join('')}
+    </div>
+    ${renderHodReportsTable(list, {compact:false, backTo:'admin', canDelete:()=>true})}
+  </div>`;
+}
+function setHodFilter(id){ state.hodFilter=id; render(); }
+function renderHodReportsTable(list, opts){
+  opts = opts || {};
+  const compact = !!opts.compact;
+  if(list.length===0) return emptyState('No HOD reports yet','Once an academic coordinator files a department report, it will appear here.');
+  return `<table class="data-table"><thead><tr><th>Department</th><th>Semester</th><th>Date</th><th>Filed by</th>${compact?'':'<th></th>'}</tr></thead>
+  <tbody>${list.map(r=>{
+    const dep = deptById(r.departmentId);
+    let actions = '';
+    if(!compact){
+      actions = `<button class="btn btn-outline btn-sm" onclick="openHodPreview('${r.id}','${opts.backTo||'admin'}')">View / Print</button>`;
+      if(opts.canEdit && opts.canEdit(r)) actions += `<button class="btn btn-outline btn-sm" onclick="editHodReport('${r.id}')">Edit</button>`;
+      if(opts.canDelete && opts.canDelete(r)) actions += `<button class="btn btn-danger btn-sm" onclick="deleteHodReport('${r.id}')">Delete</button>`;
+    }
+    return `<tr>
+      <td>${dep?escapeHtml(dep.name):'<span style="color:var(--slate-600)">Deleted dept.</span>'}</td>
+      <td>Sem ${escapeHtml(r.semester)}</td>
+      <td>${escapeHtml(r.date)}</td>
+      <td>${escapeHtml(r.submittedByName)}</td>
+      ${compact?'':`<td class="row-actions">${actions}</td>`}
+    </tr>`;
+  }).join('')}</tbody></table>`;
+}
+function deleteHodReport(id){
+  if(!confirm('Delete this HOD report? This cannot be undone.')) return;
+  data.hodReports = data.hodReports.filter(r=>r.id!==id);
+  render(); showToast('Report deleted.');
+  persist('hodReports');
+}
+
 /* ---- Settings ---- */
 function renderAdminSettings(){
   const c = data.config;
@@ -1041,6 +1147,16 @@ function renderAdminSettings(){
     </div>
     <button class="btn btn-primary btn-sm" onclick="saveAdminPassword()">Update password</button>
   </div>
+  <div class="card">
+    <div class="card-head"><div><h3>Academic Coordinator access</h3><p>Shared password used by anyone signing in as Academic Coordinator, plus the name that pre-fills their sign-off (they can still edit it per report).</p></div></div>
+    <div class="field"><label>Default Academic Co-ordinator name</label><input id="sCoordName" value="${escapeHtml(c.coordinatorName)}" placeholder="e.g. Dr. R. K. Sharma"></div>
+    <button class="btn btn-outline btn-sm" onclick="saveCoordinatorName()" style="margin-bottom:16px;">Save name</button>
+    <div class="form-toprow">
+      <div class="field"><label>New password</label><input type="password" id="sCoordPw1" placeholder="New password"></div>
+      <div class="field"><label>Confirm new password</label><input type="password" id="sCoordPw2" placeholder="Repeat new password"></div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="saveCoordinatorPassword()">Update password</button>
+  </div>
   <div class="hint-box">All data (departments, members, subjects and reports) lives in your connected Google Sheet. Anyone with the Apps Script Web App URL embedded in this file can read and write that sheet, so treat this file and the sheet like a shared office drawer — keep the file itself off public websites, and treat member passwords as shared-office credentials rather than high-security logins. Two people saving at the exact same moment can overwrite each other's change, so it's best for one person to edit a given report at a time.</div>
   `;
 }
@@ -1063,6 +1179,19 @@ function saveAdminPassword(){
   if(p1!==p2){ showToast('Passwords do not match.'); return; }
   data.config.adminPassword = p1;
   showToast('Admin password updated.'); render();
+  persist('config');
+}
+function saveCoordinatorName(){
+  data.config.coordinatorName = document.getElementById('sCoordName').value.trim();
+  showToast('Default coordinator name saved.');
+  persist('config');
+}
+function saveCoordinatorPassword(){
+  const p1 = document.getElementById('sCoordPw1').value, p2 = document.getElementById('sCoordPw2').value;
+  if(!p1 || p1.length<4){ showToast('Password should be at least 4 characters.'); return; }
+  if(p1!==p2){ showToast('Passwords do not match.'); return; }
+  data.config.coordinatorPassword = p1;
+  showToast('Academic Coordinator password updated.'); render();
   persist('config');
 }
 
@@ -1505,14 +1634,288 @@ function editSubmission(id){
 }
 
 /* =========================================================================
+   COORDINATOR SHELL — Academic Coordinator: signs in with one shared
+   password (like Admin) and has access to all departments and semesters,
+   filing the single-row "Academic Monitoring... for HODs" report.
+   ========================================================================= */
+function existingHodReportFor(departmentId, semester){
+  const matches = data.hodReports.filter(r=>r.departmentId===departmentId && String(r.semester)===String(semester));
+  if(matches.length===0) return null;
+  return matches.slice().sort((a,b)=>(b.updatedAt||b.submittedAt)-(a.updatedAt||a.submittedAt))[0];
+}
+function allDeptSemCombos(){
+  const combos = [];
+  data.departments.forEach(d=>{
+    for(let s=1;s<=6;s++) combos.push({departmentId:d.id, deptName:d.name, semester:String(s)});
+  });
+  return combos;
+}
+function renderCoordinatorShell(){
+  const NAV = [{id:'officeOrder',label:'Office Order'},{id:'reports',label:'Department Reports'}];
+  const titleMap = Object.fromEntries(NAV.map(n=>[n.id,n.label]));
+  titleMap.fill = state.hodDraft && state.hodDraft.editingId ? 'Edit report' : 'New report';
+  const activeView = state.coordinatorView==='fill' ? null : state.coordinatorView;
+  return `
+  <div class="app-shell">
+    <div class="sidebar">
+      <div class="brand"><img src="${IMG_LOGO}"><div>${escapeHtml(data.config.instituteName)}</div></div>
+      ${NAV.map(n=>`<button class="nav-item ${activeView===n.id?'active':''}" onclick="setCoordinatorView('${n.id}')"><span class="lbl">${n.label}</span></button>`).join('')}
+      <div class="sidebar-footer">
+        <div class="who"><b>${escapeHtml(data.config.coordinatorName || 'Academic Coordinator')}</b>All departments</div>
+        <button class="nav-item" onclick="syncNow()"><span class="lbl">⟳ Sync</span></button>
+        <button class="nav-item" onclick="logout()"><span class="lbl">Log out</span></button>
+      </div>
+    </div>
+    <div class="main">
+      <div class="topbar"><div><h2>${titleMap[state.coordinatorView]}</h2><div class="crumb">All departments · All semesters</div></div></div>
+      <div class="content">${renderCoordinatorView()}</div>
+    </div>
+  </div>`;
+}
+function setCoordinatorView(v){ state.coordinatorView=v; render(); }
+function renderCoordinatorView(){
+  if(state.coordinatorView==='fill') return renderHodFillForm();
+  if(state.coordinatorView==='officeOrder') return renderMemberOfficeOrder();
+  return renderCoordinatorReports();
+}
+function renderCoordinatorReports(){
+  const filterDept = state.coordDeptFilter || 'all';
+  const combos = allDeptSemCombos().filter(c=> filterDept==='all' || c.departmentId===filterDept);
+  const filedCount = data.hodReports.length;
+  return `
+  <div class="stat-grid">
+    <div class="stat"><div class="num">${data.departments.length}</div><div class="lbl">Departments</div></div>
+    <div class="stat"><div class="num">${filedCount}</div><div class="lbl">Reports filed so far</div></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h3>Department reports</h3><p>Each department + semester can be reported on once. Once it's filed, use Edit to make changes.</p></div></div>
+    <div class="tabs">
+      <button class="${filterDept==='all'?'active':''}" onclick="setCoordDeptFilter('all')">All departments</button>
+      ${data.departments.map(d=>`<button class="${filterDept===d.id?'active':''}" onclick="setCoordDeptFilter('${d.id}')">${escapeHtml(d.name)}</button>`).join('')}
+    </div>
+    <table class="data-table"><thead><tr><th>Department</th><th>Semester</th><th>Status</th><th></th></tr></thead>
+    <tbody>${combos.map(c=>{
+      const existing = existingHodReportFor(c.departmentId, c.semester);
+      const status = existing
+        ? `<span class="badge" style="background:var(--green-ok-bg);color:var(--green-ok);">✓ Filed ${escapeHtml(existing.date)}</span>`
+        : `<span class="badge">Not filed yet</span>`;
+      let actions;
+      if(!existing){
+        actions = `<button class="btn btn-primary btn-sm" onclick="startNewHodReport('${c.departmentId}','${c.semester}')">+ New report</button>`;
+      }else{
+        actions = `<button class="btn btn-outline btn-sm" onclick="openHodPreview('${existing.id}','coordinator')">View / Print</button>`;
+        actions += `<button class="btn btn-outline btn-sm" onclick="editHodReport('${existing.id}')">Edit</button>`;
+      }
+      return `<tr>
+        <td>${escapeHtml(c.deptName)}</td>
+        <td>Semester ${escapeHtml(c.semester)}</td>
+        <td>${status}</td>
+        <td class="row-actions">${actions}</td>
+      </tr>`;
+    }).join('')}</tbody></table>
+  </div>`;
+}
+function setCoordDeptFilter(id){ state.coordDeptFilter=id; render(); }
+
+function blankHodDraft(departmentId, semester){
+  const d = { departmentId, semester:String(semester), date:new Date().toISOString().slice(0,10), completionPercent:'', coordinatorName: data.config.coordinatorName || '', showErrors:false };
+  HOD_TOGGLE_FIELDS.forEach(f=> d[f.key]='');
+  HOD_NUMBER_FIELDS.forEach(f=> d[f.key]='');
+  HOD_TEXT_FIELDS.forEach(f=> d[f.key]='');
+  return d;
+}
+async function startNewHodReport(departmentId, semester){
+  showToast('Loading latest data…');
+  try{ await loadAll(); }catch(e){ console.error(e); showToast('Could not refresh from the sheet — using last-loaded data.'); }
+  const dep = deptById(departmentId);
+  if(!dep){ showToast('That department no longer exists.'); render(); return; }
+  const existing = existingHodReportFor(departmentId, semester);
+  if(existing){
+    showToast(`A report for ${dep.name} · Semester ${semester} already exists — opening it.`);
+    openHodPreview(existing.id, 'coordinator');
+    return;
+  }
+  state.hodDraft = blankHodDraft(departmentId, semester);
+  state.coordinatorView = 'fill';
+  render();
+}
+function updateHodField(field, val, el){
+  state.hodDraft[field] = val;
+  if(el && state.hodDraft.showErrors){
+    el.classList.toggle('invalid', !String(val).trim());
+  }
+}
+function toggleHodField(key){
+  const d = state.hodDraft;
+  d[key] = nextYN(d[key]);
+  const btn = document.querySelector(`.toggle-btn[data-hod="${key}"]`);
+  if(btn){
+    const invalid = d.showErrors && d[key]==='';
+    btn.className = 'toggle-btn ' + toggleClass(d[key]) + (invalid ? ' invalid' : '');
+    btn.textContent = d[key] || '–';
+  }else{
+    render();
+  }
+}
+function resetHodDraftForm(){
+  if(!confirm('Clear all entered monitoring data in this form? Department, semester, date and the coordinator name are kept.')) return;
+  const kept = { departmentId: state.hodDraft.departmentId, semester: state.hodDraft.semester, date: state.hodDraft.date, coordinatorName: state.hodDraft.coordinatorName, editingId: state.hodDraft.editingId };
+  state.hodDraft = Object.assign(blankHodDraft(kept.departmentId, kept.semester), kept);
+  render();
+}
+function cancelHodDraft(){
+  const wasEditing = !!(state.hodDraft && state.hodDraft.editingId);
+  if(confirm(wasEditing ? 'Discard changes to this report?' : 'Discard this in-progress report?')){
+    state.hodDraft = null;
+    state.coordinatorView = 'reports';
+    render();
+  }
+}
+function computeHodMissingFields(d){
+  const missing = [];
+  if(d.completionPercent===''||d.completionPercent===undefined||d.completionPercent===null) missing.push('Completion of Syllabus %');
+  HOD_TOGGLE_FIELDS.forEach(f=>{ if(d[f.key]==='') missing.push(f.label); });
+  HOD_NUMBER_FIELDS.forEach(f=>{ if(d[f.key]===''||d[f.key]===undefined||d[f.key]===null) missing.push(f.label); });
+  HOD_TEXT_FIELDS.forEach(f=>{ if(!(d[f.key]||'').trim()) missing.push(f.label); });
+  return missing;
+}
+function submitHodDraft(){
+  const d = state.hodDraft;
+  if(!(d.coordinatorName||'').trim()){
+    d.showErrors = true; render();
+    showToast('Academic Co-ordinator name is required.');
+    return;
+  }
+  const missing = computeHodMissingFields(d);
+  if(missing.length>0){
+    d.showErrors = true; render();
+    showToast(`${missing.length} field(s) still need to be filled — every column is required.`);
+    return;
+  }
+  const payload = {
+    departmentId: d.departmentId,
+    semester: d.semester,
+    date: d.date,
+    examTerm: data.config.examTerm,
+    academicSession: data.config.academicSession,
+    instituteName: data.config.instituteName,
+    completionPercent: d.completionPercent,
+    coordinatorName: d.coordinatorName,
+  };
+  HOD_TOGGLE_FIELDS.forEach(f=> payload[f.key]=d[f.key]);
+  HOD_NUMBER_FIELDS.forEach(f=> payload[f.key]=d[f.key]);
+  HOD_TEXT_FIELDS.forEach(f=> payload[f.key]=d[f.key]);
+
+  if(d.editingId){
+    const existing = data.hodReports.find(r=>r.id===d.editingId);
+    if(!existing){ showToast('This report no longer exists.'); state.hodDraft=null; state.coordinatorView='reports'; render(); return; }
+    Object.assign(existing, payload);
+    existing.updatedAt = Date.now();
+    existing.updatedByName = d.coordinatorName;
+    state.hodDraft = null;
+    openHodPreview(existing.id, 'coordinator');
+    showToast('Report updated.');
+    persist('hodReports');
+  }else{
+    const report = {
+      id: uid(),
+      ...payload,
+      submittedByName: d.coordinatorName,
+      submittedAt: Date.now(),
+    };
+    data.hodReports.push(report);
+    state.hodDraft = null;
+    openHodPreview(report.id, 'coordinator');
+    showToast('Report saved.');
+    persist('hodReports');
+  }
+}
+function editHodReport(id){
+  const r = data.hodReports.find(x=>x.id===id);
+  if(!r){ showToast('Report not found.'); return; }
+  state.hodDraft = {
+    editingId: r.id,
+    departmentId: r.departmentId,
+    semester: r.semester,
+    date: r.date,
+    completionPercent: r.completionPercent!==undefined?r.completionPercent:'',
+    coordinatorName: r.coordinatorName || '',
+    showErrors: false,
+  };
+  HOD_TOGGLE_FIELDS.forEach(f=> state.hodDraft[f.key] = r[f.key]!==undefined?r[f.key]:'');
+  HOD_NUMBER_FIELDS.forEach(f=> state.hodDraft[f.key] = r[f.key]!==undefined?r[f.key]:'');
+  HOD_TEXT_FIELDS.forEach(f=> state.hodDraft[f.key] = r[f.key]!==undefined?r[f.key]:'');
+  state.coordinatorView = 'fill';
+  render();
+}
+function renderHodFillForm(){
+  if(!state.hodDraft){
+    return `<div class="card">${emptyState('No report in progress','Start a new report from Department Reports.')}<div style="text-align:center;"><button class="btn btn-primary" onclick="setCoordinatorView('reports')">Go to Department Reports</button></div></div>`;
+  }
+  const d = state.hodDraft;
+  const dep = deptById(d.departmentId);
+  const showErrors = !!d.showErrors;
+  const rowField = (label, inner)=>`<div class="hod-field-row"><span>${escapeHtml(label)}</span>${inner}</div>`;
+  return `
+  <div class="card">
+    <div class="card-head"><div><h3>Report details</h3><p>Academic Monitoring · Internal Monitoring (${escapeHtml(data.config.examTerm)}) for HODs</p></div></div>
+    <div class="form-toprow">
+      <div class="field"><label>Department</label><input value="${escapeHtml(dep?dep.name:'—')}" disabled style="background:var(--paper-100);color:var(--ink-700);font-weight:600;"></div>
+      <div class="field"><label>Semester</label><input value="Semester ${escapeHtml(d.semester)}" disabled style="background:var(--paper-100);color:var(--ink-700);font-weight:600;"></div>
+      <div class="field"><label>Date</label><input type="date" value="${d.date}" onchange="updateHodField('date', this.value)"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h3>Monitoring details</h3><p>Every field is required, matching the official Academic Monitoring format.</p></div></div>
+    ${showErrors ? `<div class="hint-box" style="background:var(--red-no-bg);border-color:#e3c9c9;color:var(--red-no);">Some required fields are missing — they're outlined in red below.</div>` : ''}
+    ${rowField('Completion of Syllabus in % up to internal monitoring', `<input class="num-input${showErrors && d.completionPercent===''?' invalid':''}" style="width:80px;" value="${escapeHtml(d.completionPercent)}" oninput="updateHodField('completionPercent', this.value, this)" placeholder="%">`)}
+    ${HOD_TOGGLE_FIELDS.slice(0,5).map(f=>{
+      const v=d[f.key]; const invalid = showErrors && v==='';
+      return rowField(f.label, `<button class="toggle-btn ${toggleClass(v)}${invalid?' invalid':''}" data-hod="${f.key}" onclick="toggleHodField('${f.key}')">${v||'–'}</button>`);
+    }).join('')}
+    ${HOD_NUMBER_FIELDS.map(f=>{
+      const empty = d[f.key]===''||d[f.key]===undefined||d[f.key]===null;
+      return rowField(f.label, `<input class="num-input${showErrors&&empty?' invalid':''}" style="width:80px;" value="${escapeHtml(d[f.key])}" oninput="updateHodField('${f.key}', this.value, this)" placeholder="#">`);
+    }).join('')}
+    ${HOD_TOGGLE_FIELDS.slice(5).map(f=>{
+      const v=d[f.key]; const invalid = showErrors && v==='';
+      return rowField(f.label, `<button class="toggle-btn ${toggleClass(v)}${invalid?' invalid':''}" data-hod="${f.key}" onclick="toggleHodField('${f.key}')">${v||'–'}</button>`);
+    }).join('')}
+    ${HOD_TEXT_FIELDS.map(f=>{
+      const empty = !(d[f.key]||'').trim();
+      return rowField(f.label, `<input class="remarks-input${showErrors&&empty?' invalid':''}" style="width:280px;" value="${escapeHtml(d[f.key])}" oninput="updateHodField('${f.key}', this.value, this)" placeholder="Required">`);
+    }).join('')}
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h3>Sign-off</h3></div></div>
+    <div class="form-toprow">
+      <div class="field"><label>Academic Co-ordinator</label><input value="${escapeHtml(d.coordinatorName)}" oninput="updateHodField('coordinatorName', this.value, this)" class="${showErrors && !(d.coordinatorName||'').trim() ? 'invalid':''}"></div>
+      <div></div><div></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="cancelHodDraft()">Cancel</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-outline" onclick="resetHodDraftForm()">Reset entries</button>
+        <button class="btn btn-primary" onclick="submitHodDraft()">${d.editingId ? 'Save changes' : 'Save & generate report'}</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* =========================================================================
    PRINT PREVIEW
    ========================================================================= */
 function openPreview(id, backTo){
-  state.previewId = id; state.previewBack = backTo; state.view='preview'; render();
+  state.previewId = id; state.previewKind = 'submission'; state.previewBack = backTo; state.view='preview'; render();
+}
+function openHodPreview(id, backTo){
+  state.previewId = id; state.previewKind = 'hod'; state.previewBack = backTo; state.view='preview'; render();
 }
 function closePreview(){
-  state.previewId = null; state.view=null;
-  if(state.previewBack==='admin'){ /* stay in admin submissions */ }
+  const backTo = state.previewBack;
+  state.previewId = null; state.previewKind = 'submission'; state.view=null;
+  if(backTo==='admin'){ /* stay in admin */ }
+  else if(backTo==='coordinator'){ state.coordinatorView = 'reports'; }
   else { state.memberView = 'submissions'; }
   render();
 }
@@ -1521,7 +1924,8 @@ function closePreview(){
 const _origRender = render;
 render = function(){
   if(state.previewId){
-    document.getElementById('root').innerHTML = renderPreviewPage() + (state.toast?`<div class="toast">${escapeHtml(state.toast)}</div>`:'') + (state.modal?renderModal():'');
+    const page = state.previewKind==='hod' ? renderHodPreviewPage() : renderPreviewPage();
+    document.getElementById('root').innerHTML = page + (state.toast?`<div class="toast">${escapeHtml(state.toast)}</div>`:'') + (state.modal?renderModal():'');
     return;
   }
   _origRender();
@@ -1632,6 +2036,82 @@ function renderPrintTable(s){
         <td>${escapeHtml(r.perTh)}</td><td>${escapeHtml(r.perPr)}</td><td>${escapeHtml(r.perTu)}</td>
         <td class="left">${escapeHtml(r.remarks)}</td>
       </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+function renderHodPreviewPage(){
+  const r = data.hodReports.find(x=>x.id===state.previewId);
+  if(!r) return `<div style="padding:60px;text-align:center;">Report not found.<br><button class="btn btn-outline" style="margin-top:14px" onclick="closePreview()">Back</button></div>`;
+  const dep = deptById(r.departmentId);
+  return `
+  <div class="sheet-toolbar no-print">
+    <button class="btn btn-outline" onclick="closePreview()">← Back</button>
+    <button class="btn btn-primary" onclick="window.print()">⬇ Download / Print PDF</button>
+  </div>
+  <div class="sheet-outer-wrap">
+    <div class="sheet">
+      <div class="sheet-header">
+        <img class="seal" src="${IMG_LOGO}" alt="seal">
+        <h1 style="text-decoration:none;">${escapeHtml(r.instituteName || data.config.instituteName)}</h1>
+        <div style="font-weight:700;font-size:17px;margin-top:2px;">Academic Monitoring</div>
+      </div>
+      <hr class="sheet-rule"><hr class="sheet-rule thin">
+      <div style="text-align:right;font-size:12.5px;margin:6px 0 8px;">Date: <b>${formatDatePrint(r.date)}</b></div>
+      <div class="sheet-subtitle">INTERNAL MONITORING (${escapeHtml(r.examTerm)}) for HODs</div>
+      <div class="sheet-meta" style="justify-content:flex-start;gap:48px;">
+        <span>Name of the Department: <b>${dep?escapeHtml(dep.name):'—'}</b></span>
+        <span>Semester: <b>${escapeHtml(r.semester)}</b></span>
+      </div>
+      <div class="sheet-table-wrap" style="min-height:280px;">
+        <img class="watermark-img" src="${IMG_WATERMARK}" alt="">
+        ${renderHodPrintTable(r)}
+      </div>
+      <div class="sheet-sign">
+        <span>Academic Co-ordinator : <b>${escapeHtml(r.coordinatorName||'')}</b></span>
+      </div>
+      <hr class="sheet-footer-rule">
+      <div class="sheet-vision"><u>VISION</u> : ${escapeHtml(data.config.visionText)} &nbsp;&nbsp; <u>MISSION</u> : ${escapeHtml(data.config.missionText)}</div>
+    </div>
+  </div>
+  `;
+}
+function renderHodPrintTable(r){
+  const colw = [24,20,16,22,18,18,16,14,28,18,30,30]; // relative mm widths, ~254mm total
+  return `
+  <table class="print-table">
+    <colgroup>${colw.map(w=>`<col style="width:${w}mm">`).join('')}</colgroup>
+    <thead>
+      <tr>
+        <th>Completion of Syllabus in % up to internal monitoring</th>
+        <th>Preparation of question bank</th>
+        <th>PA Test marks display</th>
+        <th>Assignment, Quiz, Surprise test conducted</th>
+        <th>Remedial classes conducted</th>
+        <th>Proposed plan prepared</th>
+        <th>No of expert Lectures conducted</th>
+        <th>No of visits done</th>
+        <th>Other activities like Quiz, GD, Seminar or any other</th>
+        <th>Content beyond syllabus</th>
+        <th>Any other information</th>
+        <th>Remarks</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>${escapeHtml(r.completionPercent)}%</td>
+        <td>${escapeHtml(r.questionBank)}</td>
+        <td>${escapeHtml(r.paTestDisplay)}</td>
+        <td>${escapeHtml(r.assignmentQuiz)}</td>
+        <td>${escapeHtml(r.remedialClasses)}</td>
+        <td>${escapeHtml(r.proposedPlan)}</td>
+        <td>${escapeHtml(r.expertLectures)}</td>
+        <td>${escapeHtml(r.visitsDone)}</td>
+        <td>${escapeHtml(r.otherActivities)}</td>
+        <td>${escapeHtml(r.contentBeyond)}</td>
+        <td class="left">${escapeHtml(r.anyOtherInfo)}</td>
+        <td class="left">${escapeHtml(r.remarks)}</td>
+      </tr>
     </tbody>
   </table>`;
 }
