@@ -618,14 +618,14 @@ function renderLogin(){
         <h2>Sign in</h2>
         <p class="sub">Choose your role to continue.</p>
         <div class="role-toggle">
-          <button class="${role==='admin'?'active':''}" onclick="setLoginRole('admin')">Admin</button>
+          <button class="${role==='admin'?'active':''}" onclick="setLoginRole('admin')">Principal</button>
           <button class="${role==='member'?'active':''}" onclick="setLoginRole('member')">Committee Member</button>
           <button class="${role==='coordinator'?'active':''}" onclick="setLoginRole('coordinator')">Academic Coordinator</button>
         </div>
         ${state.loginError ? `<div class="error-msg">${escapeHtml(state.loginError)}</div>` : ''}
         ${role==='admin' ? `
           <div class="field"><label>Admin password</label><input type="password" id="loginAdminPw" placeholder="Enter admin password"></div>
-          <button class="btn btn-primary btn-block" onclick="doAdminLogin()">Sign in as Admin</button>
+          <button class="btn btn-primary btn-block" onclick="doAdminLogin()">Sign in as Principal</button>
         ` : role==='coordinator' ? `
           <div class="field"><label>Academic Coordinator password</label><input type="password" id="loginCoordPass" placeholder="Enter coordinator password"></div>
           <button class="btn btn-primary btn-block" onclick="doCoordinatorLogin()">Sign in as Academic Coordinator</button>
