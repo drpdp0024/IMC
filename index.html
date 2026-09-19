@@ -280,7 +280,7 @@ const IMG_WATERMARK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAArwAAAK0CAY
    Google Sheet, paste the provided code, Deploy > New deployment > Web app,
    access "Anyone", then copy the URL it gives you into the line below).
    ========================================================================= */
-const SHEETS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbyrIdZk0RG1l752R6EBimLOi3_V9fG-sshuLEVnONTbVHS5i0FuzHrbT6bAu1pfIrto/exec"; // <-- PASTE YOUR APPS SCRIPT WEB APP URL HERE, BETWEEN THE QUOTES
+const SHEETS_WEBAPP_URL = ""; // <-- PASTE YOUR APPS SCRIPT WEB APP URL HERE, BETWEEN THE QUOTES
 
 const INSTITUTE_NAME_DEFAULT = "Dr.Panjabrao Deshmukh Polytechnic, Amravati";
 const VISION_TEXT = "To be a leader in imparting technical education to contribute as a valuable resource for industry and society.";
@@ -401,6 +401,7 @@ function parseCell(raw, key, fallback){
 async function loadAll(){
   const raw = await sheetGetAll(); // {key: jsonString, ...}
   const isFirstRun = !raw || raw.config===undefined;
+  let configWasMissingFields = false;
   if(isFirstRun){
     data.config = defaultConfig();
     data.departments = defaultDepartments();
@@ -418,7 +419,10 @@ async function loadAll(){
       sheetSet('hodReports', data.hodReports),
     ]);
   }else{
-    data.config = parseCell(raw.config, 'config', defaultConfig());
+    const storedConfig = parseCell(raw.config, 'config', {});
+    const defaults = defaultConfig();
+    configWasMissingFields = Object.keys(defaults).some(k => !(k in storedConfig));
+    data.config = Object.assign(defaults, storedConfig);
     data.departments = parseCell(raw.departments, 'departments', defaultDepartments());
     data.members = parseCell(raw.members, 'members', []);
     data.offerings = parseCell(raw.offerings, 'offerings', []);
@@ -427,6 +431,10 @@ async function loadAll(){
     data.officeOrderDataUrl = reconstructOfficeOrder(raw, data.config.officeOrder);
   }
   migrateData();
+  // If this sheet's config row pre-dates a newer field (e.g. coordinatorPassword),
+  // write the backfilled defaults so the sheet itself has them from now on —
+  // otherwise every reload would silently patch them in memory only.
+  if(configWasMissingFields) persist('config');
 }
 
 /* The office order PDF is too big for one Google Sheets cell (50,000 char
