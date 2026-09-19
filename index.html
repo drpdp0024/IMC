@@ -624,7 +624,7 @@ function renderLogin(){
         </div>
         ${state.loginError ? `<div class="error-msg">${escapeHtml(state.loginError)}</div>` : ''}
         ${role==='admin' ? `
-          <div class="field"><label>Principal Login password</label><input type="password" id="loginAdminPw" placeholder="Enter admin password"></div>
+          <div class="field"><label>Principal Login password</label><input type="password" id="loginAdminPw" placeholder="Enter password"></div>
           <button class="btn btn-primary btn-block" onclick="doAdminLogin()">Sign in as Principal</button>
         ` : role==='coordinator' ? `
           <div class="field"><label>Academic Coordinator password</label><input type="password" id="loginCoordPass" placeholder="Enter coordinator password"></div>
