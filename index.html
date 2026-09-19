@@ -280,7 +280,7 @@ const IMG_WATERMARK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAArwAAAK0CAY
    Google Sheet, paste the provided code, Deploy > New deployment > Web app,
    access "Anyone", then copy the URL it gives you into the line below).
    ========================================================================= */
-const SHEETS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbyrIdZk0RG1l752R6EBimLOi3_V9fG-sshuLEVnONTbVHS5i0FuzHrbT6bAu1pfIrto/exec"; // <-- PASTE YOUR APPS SCRIPT WEB APP URL HERE, BETWEEN THE QUOTES
+const SHEETS_WEBAPP_URL = ""; // <-- PASTE YOUR APPS SCRIPT WEB APP URL HERE, BETWEEN THE QUOTES
 
 const INSTITUTE_NAME_DEFAULT = "Dr.Panjabrao Deshmukh Polytechnic, Amravati";
 const VISION_TEXT = "To be a leader in imparting technical education to contribute as a valuable resource for industry and society.";
@@ -618,14 +618,14 @@ function renderLogin(){
         <h2>Sign in</h2>
         <p class="sub">Choose your role to continue.</p>
         <div class="role-toggle">
-          <button class="${role==='admin'?'active':''}" onclick="setLoginRole('admin')">Principal</button>
+          <button class="${role==='admin'?'active':''}" onclick="setLoginRole('admin')">Admin</button>
           <button class="${role==='member'?'active':''}" onclick="setLoginRole('member')">Committee Member</button>
           <button class="${role==='coordinator'?'active':''}" onclick="setLoginRole('coordinator')">Academic Coordinator</button>
         </div>
         ${state.loginError ? `<div class="error-msg">${escapeHtml(state.loginError)}</div>` : ''}
         ${role==='admin' ? `
           <div class="field"><label>Admin password</label><input type="password" id="loginAdminPw" placeholder="Enter admin password"></div>
-          <button class="btn btn-primary btn-block" onclick="doAdminLogin()">Sign in as Principal</button>
+          <button class="btn btn-primary btn-block" onclick="doAdminLogin()">Sign in as Admin</button>
         ` : role==='coordinator' ? `
           <div class="field"><label>Academic Coordinator password</label><input type="password" id="loginCoordPass" placeholder="Enter coordinator password"></div>
           <button class="btn btn-primary btn-block" onclick="doCoordinatorLogin()">Sign in as Academic Coordinator</button>
@@ -1102,7 +1102,7 @@ function renderHodReportsTable(list, opts){
   opts = opts || {};
   const compact = !!opts.compact;
   if(list.length===0) return emptyState('No HOD reports yet','Once an academic coordinator files a department report, it will appear here.');
-  return `<table class="data-table"><thead><tr><th>Department</th><th>Semester</th><th>Date</th><th>Filed by</th>${compact?'':'<th></th>'}</tr></thead>
+  return `<table class="data-table"><thead><tr><th>Department</th><th>Date</th><th>Filed by</th>${compact?'':'<th></th>'}</tr></thead>
   <tbody>${list.map(r=>{
     const dep = deptById(r.departmentId);
     let actions = '';
@@ -1113,7 +1113,6 @@ function renderHodReportsTable(list, opts){
     }
     return `<tr>
       <td>${dep?escapeHtml(dep.name):'<span style="color:var(--slate-600)">Deleted dept.</span>'}</td>
-      <td>Sem ${escapeHtml(r.semester)}</td>
       <td>${escapeHtml(r.date)}</td>
       <td>${escapeHtml(r.submittedByName)}</td>
       ${compact?'':`<td class="row-actions">${actions}</td>`}
@@ -1642,20 +1641,13 @@ function editSubmission(id){
 
 /* =========================================================================
    COORDINATOR SHELL — Academic Coordinator: signs in with one shared
-   password (like Admin) and has access to all departments and semesters,
-   filing the single-row "Academic Monitoring... for HODs" report.
+   password (like Admin) and has access to all departments, filing one
+   consolidated "Academic Monitoring... for HODs" report per department.
    ========================================================================= */
-function existingHodReportFor(departmentId, semester){
-  const matches = data.hodReports.filter(r=>r.departmentId===departmentId && String(r.semester)===String(semester));
+function existingHodReportFor(departmentId){
+  const matches = data.hodReports.filter(r=>r.departmentId===departmentId);
   if(matches.length===0) return null;
   return matches.slice().sort((a,b)=>(b.updatedAt||b.submittedAt)-(a.updatedAt||a.submittedAt))[0];
-}
-function allDeptSemCombos(){
-  const combos = [];
-  data.departments.forEach(d=>{
-    for(let s=1;s<=6;s++) combos.push({departmentId:d.id, deptName:d.name, semester:String(s)});
-  });
-  return combos;
 }
 function renderCoordinatorShell(){
   const NAV = [{id:'officeOrder',label:'Office Order'},{id:'reports',label:'Department Reports'}];
@@ -1674,7 +1666,7 @@ function renderCoordinatorShell(){
       </div>
     </div>
     <div class="main">
-      <div class="topbar"><div><h2>${titleMap[state.coordinatorView]}</h2><div class="crumb">All departments · All semesters</div></div></div>
+      <div class="topbar"><div><h2>${titleMap[state.coordinatorView]}</h2><div class="crumb">All departments</div></div></div>
       <div class="content">${renderCoordinatorView()}</div>
     </div>
   </div>`;
@@ -1686,8 +1678,6 @@ function renderCoordinatorView(){
   return renderCoordinatorReports();
 }
 function renderCoordinatorReports(){
-  const filterDept = state.coordDeptFilter || 'all';
-  const combos = allDeptSemCombos().filter(c=> filterDept==='all' || c.departmentId===filterDept);
   const filedCount = data.hodReports.length;
   return `
   <div class="stat-grid">
@@ -1695,54 +1685,48 @@ function renderCoordinatorReports(){
     <div class="stat"><div class="num">${filedCount}</div><div class="lbl">Reports filed so far</div></div>
   </div>
   <div class="card">
-    <div class="card-head"><div><h3>Department reports</h3><p>Each department + semester can be reported on once. Once it's filed, use Edit to make changes.</p></div></div>
-    <div class="tabs">
-      <button class="${filterDept==='all'?'active':''}" onclick="setCoordDeptFilter('all')">All departments</button>
-      ${data.departments.map(d=>`<button class="${filterDept===d.id?'active':''}" onclick="setCoordDeptFilter('${d.id}')">${escapeHtml(d.name)}</button>`).join('')}
-    </div>
-    <table class="data-table"><thead><tr><th>Department</th><th>Semester</th><th>Status</th><th></th></tr></thead>
-    <tbody>${combos.map(c=>{
-      const existing = existingHodReportFor(c.departmentId, c.semester);
+    <div class="card-head"><div><h3>Department reports</h3><p>One consolidated report per department. Once it's filed, use Edit to make changes.</p></div></div>
+    <table class="data-table"><thead><tr><th>Department</th><th>Status</th><th></th></tr></thead>
+    <tbody>${data.departments.map(dep=>{
+      const existing = existingHodReportFor(dep.id);
       const status = existing
         ? `<span class="badge" style="background:var(--green-ok-bg);color:var(--green-ok);">✓ Filed ${escapeHtml(existing.date)}</span>`
         : `<span class="badge">Not filed yet</span>`;
       let actions;
       if(!existing){
-        actions = `<button class="btn btn-primary btn-sm" onclick="startNewHodReport('${c.departmentId}','${c.semester}')">+ New report</button>`;
+        actions = `<button class="btn btn-primary btn-sm" onclick="startNewHodReport('${dep.id}')">+ New report</button>`;
       }else{
         actions = `<button class="btn btn-outline btn-sm" onclick="openHodPreview('${existing.id}','coordinator')">View / Print</button>`;
         actions += `<button class="btn btn-outline btn-sm" onclick="editHodReport('${existing.id}')">Edit</button>`;
       }
       return `<tr>
-        <td>${escapeHtml(c.deptName)}</td>
-        <td>Semester ${escapeHtml(c.semester)}</td>
+        <td>${escapeHtml(dep.name)}</td>
         <td>${status}</td>
         <td class="row-actions">${actions}</td>
       </tr>`;
     }).join('')}</tbody></table>
   </div>`;
 }
-function setCoordDeptFilter(id){ state.coordDeptFilter=id; render(); }
 
-function blankHodDraft(departmentId, semester){
-  const d = { departmentId, semester:String(semester), date:new Date().toISOString().slice(0,10), completionPercent:'', coordinatorName: data.config.coordinatorName || '', showErrors:false };
+function blankHodDraft(departmentId){
+  const d = { departmentId, date:new Date().toISOString().slice(0,10), completionPercent:'', coordinatorName: data.config.coordinatorName || '', showErrors:false };
   HOD_TOGGLE_FIELDS.forEach(f=> d[f.key]='');
   HOD_NUMBER_FIELDS.forEach(f=> d[f.key]='');
   HOD_TEXT_FIELDS.forEach(f=> d[f.key]='');
   return d;
 }
-async function startNewHodReport(departmentId, semester){
+async function startNewHodReport(departmentId){
   showToast('Loading latest data…');
   try{ await loadAll(); }catch(e){ console.error(e); showToast('Could not refresh from the sheet — using last-loaded data.'); }
   const dep = deptById(departmentId);
   if(!dep){ showToast('That department no longer exists.'); render(); return; }
-  const existing = existingHodReportFor(departmentId, semester);
+  const existing = existingHodReportFor(departmentId);
   if(existing){
-    showToast(`A report for ${dep.name} · Semester ${semester} already exists — opening it.`);
+    showToast(`A report for ${dep.name} already exists — opening it.`);
     openHodPreview(existing.id, 'coordinator');
     return;
   }
-  state.hodDraft = blankHodDraft(departmentId, semester);
+  state.hodDraft = blankHodDraft(departmentId);
   state.coordinatorView = 'fill';
   render();
 }
@@ -1765,9 +1749,9 @@ function toggleHodField(key){
   }
 }
 function resetHodDraftForm(){
-  if(!confirm('Clear all entered monitoring data in this form? Department, semester, date and the coordinator name are kept.')) return;
-  const kept = { departmentId: state.hodDraft.departmentId, semester: state.hodDraft.semester, date: state.hodDraft.date, coordinatorName: state.hodDraft.coordinatorName, editingId: state.hodDraft.editingId };
-  state.hodDraft = Object.assign(blankHodDraft(kept.departmentId, kept.semester), kept);
+  if(!confirm('Clear all entered monitoring data in this form? Department, date and the coordinator name are kept.')) return;
+  const kept = { departmentId: state.hodDraft.departmentId, date: state.hodDraft.date, coordinatorName: state.hodDraft.coordinatorName, editingId: state.hodDraft.editingId };
+  state.hodDraft = Object.assign(blankHodDraft(kept.departmentId), kept);
   render();
 }
 function cancelHodDraft(){
@@ -1801,7 +1785,6 @@ function submitHodDraft(){
   }
   const payload = {
     departmentId: d.departmentId,
-    semester: d.semester,
     date: d.date,
     examTerm: data.config.examTerm,
     academicSession: data.config.academicSession,
@@ -1843,7 +1826,6 @@ function editHodReport(id){
   state.hodDraft = {
     editingId: r.id,
     departmentId: r.departmentId,
-    semester: r.semester,
     date: r.date,
     completionPercent: r.completionPercent!==undefined?r.completionPercent:'',
     coordinatorName: r.coordinatorName || '',
@@ -1868,8 +1850,8 @@ function renderHodFillForm(){
     <div class="card-head"><div><h3>Report details</h3><p>Academic Monitoring · Internal Monitoring (${escapeHtml(data.config.examTerm)}) for HODs</p></div></div>
     <div class="form-toprow">
       <div class="field"><label>Department</label><input value="${escapeHtml(dep?dep.name:'—')}" disabled style="background:var(--paper-100);color:var(--ink-700);font-weight:600;"></div>
-      <div class="field"><label>Semester</label><input value="Semester ${escapeHtml(d.semester)}" disabled style="background:var(--paper-100);color:var(--ink-700);font-weight:600;"></div>
       <div class="field"><label>Date</label><input type="date" value="${d.date}" onchange="updateHodField('date', this.value)"></div>
+      <div></div>
     </div>
   </div>
   <div class="card">
@@ -2068,7 +2050,6 @@ function renderHodPreviewPage(){
       <div class="sheet-subtitle">INTERNAL MONITORING (${escapeHtml(r.examTerm)}) for HODs</div>
       <div class="sheet-meta" style="justify-content:flex-start;gap:48px;">
         <span>Name of the Department: <b>${dep?escapeHtml(dep.name):'—'}</b></span>
-        <span>Semester: <b>${escapeHtml(r.semester)}</b></span>
       </div>
       <div class="sheet-table-wrap" style="min-height:280px;">
         <img class="watermark-img" src="${IMG_WATERMARK}" alt="">
