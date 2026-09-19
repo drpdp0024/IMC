@@ -618,14 +618,14 @@ function renderLogin(){
         <h2>Sign in</h2>
         <p class="sub">Choose your role to continue.</p>
         <div class="role-toggle">
-          <button class="${role==='admin'?'active':''}" onclick="setLoginRole('admin')">Admin</button>
+          <button class="${role==='admin'?'active':''}" onclick="setLoginRole('admin')">Principal Login</button>
           <button class="${role==='member'?'active':''}" onclick="setLoginRole('member')">Committee Member</button>
           <button class="${role==='coordinator'?'active':''}" onclick="setLoginRole('coordinator')">Academic Coordinator</button>
         </div>
         ${state.loginError ? `<div class="error-msg">${escapeHtml(state.loginError)}</div>` : ''}
         ${role==='admin' ? `
-          <div class="field"><label>Admin password</label><input type="password" id="loginAdminPw" placeholder="Enter admin password"></div>
-          <button class="btn btn-primary btn-block" onclick="doAdminLogin()">Sign in as Admin</button>
+          <div class="field"><label>Principal Login password</label><input type="password" id="loginAdminPw" placeholder="Enter admin password"></div>
+          <button class="btn btn-primary btn-block" onclick="doAdminLogin()">Sign in as Principal</button>
         ` : role==='coordinator' ? `
           <div class="field"><label>Academic Coordinator password</label><input type="password" id="loginCoordPass" placeholder="Enter coordinator password"></div>
           <button class="btn btn-primary btn-block" onclick="doCoordinatorLogin()">Sign in as Academic Coordinator</button>
@@ -1184,7 +1184,7 @@ function saveAdminPassword(){
   if(!p1 || p1.length<4){ showToast('Password should be at least 4 characters.'); return; }
   if(p1!==p2){ showToast('Passwords do not match.'); return; }
   data.config.adminPassword = p1;
-  showToast('Admin password updated.'); render();
+  showToast('Principal Login password updated.'); render();
   persist('config');
 }
 function saveCoordinatorName(){
